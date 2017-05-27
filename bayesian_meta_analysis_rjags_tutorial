@@ -1,169 +1,677 @@
 ---
-title: "Bayesian Network Meta-Analysis: A Tutorial"
-author: "Mark Bounthavong"
-date: "5/11/2017"
-output: html_document
+title: "JAGS tutorial using R"
+author: "Author: Mark Bounthavong"
+date: "Date: 05/26/2017"
+output:
+  html_document: default
+  word_document: default
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-
 ## Introduction
+In this tutorial, you will learn how to perform some simple pair-wise meta-analyses using Bayesian methods. The platform that you will use is R with the JAGS program installed. RStudio is the interface for R which allows you to write your codes and compile them into the console. For this tutorial, you will need to have installed R, RStudio, JAGS, and the various packages associated with JAGS such as rjags, R2jags, mcmcplot, code, and boa.
 
-In this tutorial, we will perform a network meta-analysis (NMA) using Bayesian methods. NMA allows us to compare different treatments indirectly by borrowing strength from direct comparison studies. For example, we want to compare Drug A with Drug C. Now imagine that there are no studies that compare Drug A and C. Instead, there are studies that compare Drug A with Drug B and studies that compare Drug C with Drug B. Drug B is the common drug that the others are compared to. We take advantage of these direct relationships between Drugs A and C with Drug B and create a network where Drugs A and C can be compared with indirectly. Figure 1 illustrates the comparison between Drugs A, B, and C with both direct and indirect pathways. Note that Figure 1 also include a direct path between Drugs A and C. 
+## Example 1 -- Aspirin meta-analysis using a fixed effects model
+### Read-in the data
 
-![Figure 1. Indirect and Direct comparisons between Drugs A, B, and C.](figure1.jpeg)
+When you read your data, make sure you are using the correct working directory. You can change your working directory using the setwd command. In this tutorial am using my working directory to allow the codes to work. Make sure that you replace the directory path that I'm using with your directory path when you perform these tutorials for yourself. 
 
-NMA allows us to generate information about the probability that an event (e.g., success versus failure, survives versus dies) will occur. This probability may be used in a Markov model where transition probabilities are used to simulate a hypothetical cohort across transition states. Figure 2 is a simple Markov model with an arrow going from State 0 to State 1. 
-
-![Figure 2. Markov model for State 0 and State 1. The arrow indicates the transition from State 0 to State 1 and is based on the transition probablity.](figure2.gif)
-
+I have saved the data as <a href ="https://github.com/mbounthavong/Bayesian-meta-analysis">data1.csv</a>. Please use this data for this example. The data can be located here:
+https://github.com/mbounthavong/Bayesian-meta-analysis
 
 
-############ EXERCISE 4-3
-##### Clear the dataset
-```{r}
+```{r cars}
+##### Clear data
 rm(list=ls())
 
+#### I commented out the system that I am not on. In this case, I commented out the PC system for the Mac.
 ##### For mac:
-# setwd("/Users/mbounthavong/Dropbox/UW Courses/PHARM 536 -- Beth's lecture/Beths Winbugs examples/Bayesian NMA tutorial")
-
+setwd("/Users/mbounthavong/Dropbox/UW Courses/PHARM 536 -- Beth's lecture/Beths Winbugs examples")
 
 ##### For PC:
-setwd("D:\\mboun\\Dropbox\\UW Courses\\PHARM 536 -- Beth's lecture\\Beths Winbugs examples\\Bayesian NMA tutorial")
+# setwd("D:\\mboun\\Dropbox\\UW Courses\\PHARM 536 -- Beth's lecture\\Beths Winbugs examples")
+
+##### Read the data into R.
+##### The data is saved as a CSV file.
+data = read.csv("data1.csv")
+head(data) # Shows the first six entries
 ```
 
+### Defining values 
 
-```{r}
-data_list <- list(
-  ns = 9,
-  na = c(2, 2, 2, 2, 2, 2, 2, 2, 2),
-  t = structure(.Data = c(4, 1, 4, 3, 4, 3, 4, 1, 4, 2, 4, 5, 4, 1, 4, 2, 4, 1), .Dim = c(9, 2)),
-  r = structure(.Data = c(31, 94, 32, 73, 7, 20, 6, 21, 59, 96, 33, 56, 8, 15, 60, 103, 3, 10), .Dim = c(9, 2)),
-  n = structure(.Data = c(261, 260, 188, 192, 36, 37, 64, 65, 329, 336, 153, 154, 18, 19, 210, 215, 25, 25), .Dim = c(9, 2))
-)
+After you read-in your data, we will define some values that will be used in the JAGS model. These values are necessary for the JAGS model to run. These include the initial values for the priors and the headers for the data columns.
 
-```
-
-
-```{r}
-## Embed the BUGS model
-cat("model {
-	for (i in 1:ns) {
-
-    # Likelihood for each arm
-      for (k in 1:na[i]) {
-      r[i, k] ~ dbin(p[i, k], n[i, k])
-      logit(p[i, k]) <- mu[i] + delta[i, k]
-    }
-    
-      # Study-level relative effects
-      # The arms are given in the order (arm_1, arm_2, ..., arm_{n_a-1}, arm_{n_a}).
-      # The relative effects are parameterized as d[arm_1, arm_k].
-      w[i, 1] <- 0
-      delta[i, 1] <- 0
-
-        for (k in 2:na[i]) { # parameterize multi-arm trials using a trick to avoid dmnorm
-          delta[i, k] ~ dnorm(md[i, k], taud[i, k])
-          md[i, k] <- d[t[i, 1], t[i, k]] + sw[i, k]
-          taud[i, k] <- ((tau.d * 2 * (k - 1)) / k)
-          w[i, k] <- delta[i, k] - d[t[i, 1], t[i, k]]
-          sw[i, k] <- sum(w[i, 1:(k-1]) / (k - 1)
-    }
-    }
-    
-    # Relative effect matrix
-    d[1,1] <- 0
-    d[1,2] <- -d.Placebo.ADA + d.Placebo.CTZ
-    d[1,3] <- -d.Placebo.ADA + d.Placebo.IFX
-    d[1,4] <- -d.Placebo.ADA
-    d[1,5] <- -d.Placebo.ADA + d.Placebo.VED
-    d[2,1] <- d.Placebo.ADA + -d.Placebo.CTZ
-    d[2,2] <- 0
-    d[2,3] <- -d.Placebo.CTZ + d.Placebo.IFX
-    d[2,4] <- -d.Placebo.CTZ
-    d[2,5] <- -d.Placebo.CTZ + d.Placebo.VED
-    d[3,1] <- d.Placebo.ADA + -d.Placebo.IFX
-    d[3,2] <- d.Placebo.CTZ + -d.Placebo.IFX
-    d[3,3] <- 0
-    d[3,4] <- -d.Placebo.IFX
-    d[3,5] <- -d.Placebo.IFX + d.Placebo.VED
-    d[4,1] <- d.Placebo.ADA
-    d[4,2] <- d.Placebo.CTZ
-    d[4,3] <- d.Placebo.IFX
-    d[4,4] <- 0
-    d[4,5] <- d.Placebo.VED
-    d[5,1] <- d.Placebo.ADA + -d.Placebo.VED
-    d[5,2] <- d.Placebo.CTZ + -d.Placebo.VED
-    d[5,3] <- d.Placebo.IFX + -d.Placebo.VED
-    d[5,4] <- -d.Placebo.VED
-    d[5,5] <- 0
-    
-    # Study baseline priors
-    for (i in 1:ns) {
-      mu[i] ~ dnorm(0, 1.904E-3)
-    }
-    
-    # Variance prior
-    sd.d ~ dunif(0, 1.528E0)
-    tau.d <- pow(sd.d, -2)
-    
-    # Effect parameter priors
-    d.Placebo.ADA ~ dnorm(0, 1.904E-3)
-    d.Placebo.CTZ ~ dnorm(0, 1.904E-3)
-    d.Placebo.IFX ~ dnorm(0, 1.904E-3)
-    d.Placebo.VED ~ dnorm(0, 1.904E-3)
-    }", file="nma1.txt")
-```
+```{r message=FALSE}
+##### Values for simulation
+N <- length(data$y) # There are 7 total studies. 
 
 ##### load libraries
-```{r}
-
 library(rjags)
 library(coda)
-library(mcmcplots)
 
+##### now prepare dat for JAGS
+## N is the number of entries (e.g., 7)
+## y is the outcome in the data (e.g., ln(OR))
+## V is the variance in the data
+dat <- list("N" = N, "y" = data$y, "V" = data$V)  # names list of numbers
+
+##### Initial values
+inits <- list( d = 0.0 )
 ```
 
+### Enter your model
+
+Next, you will need to define your JAGS model using the BUGS syntax. This can be done in two ways: 
+
+(1) Using a text editor or 
+
+(2) Embed the BUGS model into R. 
+
+For this example, I will embed the BUGS model into R. We will save this as "aspirinFE.txt." The d parameter will be given a normal distribution with mean 0 and precision 1E-5.
 
 ```{r}
-##### Read the initial valuse into R.
-inits <- list(
-  d.Placebo.ADA = 1.388265790917909,
-  d.Placebo.CTZ = 0.25916565964346244,
-  d.Placebo.IFX = 0.8268554361045273,
-  d.Placebo.VED = 0.2581658990241804,
-  mu = c(-1.9886662444656795, -0.8825410115462085, -1.0134849834234265, -3.2017987520808435, -1.4802942672463546, -0.6105619472642414, -0.4507803942256785, -1.0455302538778515, -2.7800670327853485),
-  delta = structure(.Data = c(NA, 1.4001762952657897, NA, 0.8661967180000879, NA, 2.3805414017275446, NA, 1.2846598341374118, NA, 0.5154207052324286, NA, 0.5574635613530288, NA, 2.2365332292919313, NA, 1.2700993332331474, NA, -0.08763694450017301), .Dim = c(9, 2)),
-  sd.d = 1.157904659099175
-)
+##### define JAGS model within R
 
-params <- c("delta")
+cat("model
+    {
+
+    for ( i in 1:N ) {
+    
+    P[i] <- 1/V[i]
+    
+    y[i] ~ dnorm( d, P[i] )
+
+    }
+
+    ### Define the priors
+    d ~ dnorm( 0, 0.00001 )
+
+    ### Transform the ln(OR) to OR
+    OR <- exp( d )
+
+    }", file="aspirinFE.txt")
 ```
 
-## The BUGS model is saved as a text or jag file. I used Notepad ++ to build the model
-## but you can use any text editor. Please do not use Words.
+### Set up the JAGS model
+
+Use the following syntax to set up the JAGS model. Notice that the number of chains is set to "1." We are going to only use a single chain for our MCMC simulations. The number of adaptions is set at 500. This is done to improve the calibation of the MCMC and improve the mixing of the chain. 
 ```{r}
-jags.m <- jags.model( file = "nma1.txt", data=data_list, inits=inits, n.chains=1, n.adapt=500 )
+#### Set up the JAGS model and settings
+jags.m <- jags.model( file = "aspirinFE.txt", data=dat, inits=inits, n.chains=2, n.adapt=500 )
 ```
 
+### Specify the parameters to be monitored
+
+These are the parameters that the output will provide for us. Review the BUGS model and notice that the output parameters only include d and OR. 
+```{r}
+## specify parameters to be monitored
+params <- c("d", "OR")
+```
+
+### Run JAGS and save the posterior samples
+
+We will save the coda samples as "samps" and iterate this MCMC for 10,000 iterations. The more iterations your run, the longer it will take to complete. 
+```{r}
 ## run JAGS and save posterior samples
-```{r}
 samps <- coda.samples( jags.m, params, n.iter=10000 )
 ```
 
+### Summarize the posteriors samples with a burn-in of 5000 iterations
 
-## summarize posterior samples
+We need to have a burn-in period to eliminate any poor mixing of the MCMC at the beginning of the simulation. The usual number of burn-ins is approximately 5,000. 
 ```{r}
+## summarize posterior samples
+summary(samps)
+summary(window(samps, start=5001))  # Burn in of 5000. Start at 5001
+
+## Alternatively, we can write
+burn.in <- 5000
+summary(window(samps, start = burn.in))
+```
+
+### Plot distributions of the parameters
+
+Plot the posterior distributions of the parameters. We are looking for ditributions that are stable and not erratic.
+```{r}
+plot(samps)
+```
+
+### Perform the Rubin-Gelman diagnostics
+```{r}
+## Diagnostics
+# Gelman-Rubinmeasure whether there is a significant difference between 
+# the variance within several chains and the variance between several
+# chains by the potential  scale  reduction  factors.
+# Goal is to get a value of 1.1 or less.
+gelman.diag(samps)
+gelman.plot(samps)
+```
+
+
+
+
+## Example #2 -- Aspirin meta-analysis using a random effects model
+
+In this example, we will evaluate the same meta-analysis, but we will use a random effects model instead of a fixed effects model. In random effects model, there is heterogeneity in the outcomes across the different studies. In order to address this, we need to include a new parameter into the meta-analysis called tau. 
+
+### Read-in the data
+
+I have saved the data as <a href="https://github.com/mbounthavong/Bayesian-meta-analysis">data1.csv</a>. Please use this data for this example.
+
+```{r}
+##### Clear the dataset
+rm(list=ls())
+
+##### For mac:
+setwd("/Users/mbounthavong/Dropbox/UW Courses/PHARM 536 -- Beth's lecture/Beths Winbugs examples")
+
+##### For PC:
+# setwd("D:\\mboun\\Dropbox\\UW Courses\\PHARM 536 -- Beth's lecture\\Beths Winbugs examples")
+
+##### Read the data into R.
+##### The data is saved as a CSV file.
+data = read.csv("data1.csv")
+head(data) # Shows the first six entries
+```
+
+### Define the values for the model. 
+
+With a random effects model, the prior will need to have initial values. These are usually zero unless you have some idea of what the values should be. For this example, we will set the initial values to zero. Only tau has an initial value of 1. Since there are 7 studies in the meta-analysis, there must be 7 initial values for delta.
+
+```{r message=FALSE}
+##### Values for simulation
+N <- length(data$y) # There are 7 total studies. 
+
+##### load libraries
+library(rjags)
+library(coda)
+
+##### now prepare dat for JAGS
+## N is the number of entries (e.g., 7)
+## y is the outcome in the data (e.g., ln(OR))
+## V is the variance in the data
+dat <- list("N" = N, "y" = data$y, "V" = data$V)  # names list of numbers
+
+##### Initial values
+inits <- list( d = 0.0, tau = 1, delta = c (0, 0, 0, 0, 0, 0, 0) )
+```
+
+### Embed the BUGS model into R. 
+
+After setting up the initial values, embed the BUGS model directly into R. We will save this as "aspirinRE2.txt."
+
+```{r}
+##### define JAGS model within R
+## The BUGS model is saved as a text or jag file. I used Notepad ++ to build the model
+## but you can use any text editor. Please do not use Words.
+
+#### Alternatively, you can enter the mode directly in R:
+cat("model
+    {
+
+    for (i in 1:N) {
+    
+    y[i] ~ dnorm( delta[i], P[i] )
+
+    delta[i] ~ dnorm( d, prec )
+
+    P[i] <- 1/V[i]
+
+    }
+
+    ### Define the priors
+    d ~ dnorm( 0, 0.00001 )
+    tau ~ dunif( 0, 10 )
+    tau.sq <- tau * tau
+    prec <- 1 / tau.sq
+  
+    ### Transform ln(OR) into OR
+    OR <- exp ( d )
+
+    }", file="aspirinRE2.txt")
+```
+
+### Set up the JAGS model
+```{r}
+## Set up the JAGS model.
+jags.m <- jags.model( file = "aspirinRE2.txt", data=dat, inits=inits, n.chains=2, n.adapt=500 )
+```
+
+### Specify the parameters of interest. 
+
+Normally this is the outcome, such as the odds ratio or standardized mean difference. We also include tau and delta. Delta tells us the treatment effect of ASA. We won't plot delta[i]; however, you can do this by including delta as part of the parameters to be monitored. Keep in mind that you may run into errors if you plot too many graphics into a single viewing pane due to the margins and size limitations. If you encounter this problem, it maay be best to plot a few parameters at a time. 
+
+```{r}
+## specify parameters to be monitored
+params <- c("d", "OR", "tau")
+```
+
+### Run JAGS model and save the samples
+```{r}
+## run JAGS and save posterior samples
+samps <- coda.samples( jags.m, params, n.iter=10000 )
+```
+
+### Use a burn-in of 5,000 iterations
+```{r}
+## summarize posterior samples
 summary(samps)
 summary(window(samps, start=5001))  # Burn in of 5000. Start at 5001.
+```
+
+### Plot the posterior distribution
+Plot the traces and posterior distributions. 
+```{r}
 plot(samps)
 ```
 
 
-## More plots
+## Example 3 -- Meta-analysis using a random effects Binomial model 
+
+In this example, we will perform a meta-analysis with a binomial model. The data set will include the number of events of interest and the total number of the sample. The data will be <a href ="https://github.com/mbounthavong/Bayesian-meta-analysis">data2.csv</a>
+
+### Read in the data
 ```{r}
-caterplot(as.mcmc(samps), parms="OR")
+##### Clear the dataset
+rm(list=ls())
+
+##### For mac:
+setwd("/Users/mbounthavong/Dropbox/UW Courses/PHARM 536 -- Beth's lecture/Beths Winbugs examples")
+
+##### For PC:
+# setwd("D:\\mboun\\Dropbox\\UW Courses\\PHARM 536 -- Beth's lecture\\Beths Winbugs examples")
+
+##### Read the data into R.
+##### The data is saved as a CSV file.
+data <- read.csv("data2.csv")
+head(data) # Shows the first six entries
 ```
+
+### Load libraries and define the values for the simulation
+```{r message=FALSE}
+##### Values for simulation
+N <- length(data$rA) # There are 7 total studies. 
+
+
+##### load libraries
+library(rjags)
+library(coda)
+
+##### now prepare dat for JAGS
+## N is the number of entries (e.g., 7)
+## rA is the number of events for Treatment A
+## rB is the number of events for Treatment B
+## nA is the total number (denominator) for Treatment A
+## nB is the total number (denominator) for Treatment B
+dat <- list("N" = N, "rA" = data$rA, "rB" = data$rB, "nA" = data$nA, "nB" = data$nB)  # names list of numbers
+
+##### Initial values
+inits <- list( d = 0, tau = 1, delta = c (0,0,0,0,0, 0,0), mu = c (0,0,0,0,0, 0,0) )
+```
+
+### Embed the BUGS model into R
+```{r}
+#### Alternatively, you can enter the model directly into R.
+cat("model
+    {
+    
+    ## Define the likelihood (logit) model:
+    for( i in 1:N ) {
+    
+    rA[i] ~ dbin( pA[i], nA[i] )
+    rB[i] ~ dbin( pB[i], nB[i] )
+    
+    logit( pA[i] ) <- mu[i]
+    logit( pB[i] ) <- mu[i] + delta[i]
+    
+    mu[i] ~ dnorm( 0.0, 0.00001 )
+    
+    delta[i] ~ dnorm( d, prec )
+    
+    }
+    
+    ## Define priors
+    d ~ dnorm( 0.0, 0.000001 )
+    tau ~ dunif( 0, 10 )
+    tau.sq <- tau*tau
+    prec <- 1/( tau.sq )
+    
+    ## Outcomes of interest
+    OR <- exp( d )
+    prob.OR1 <- step( d )
+    
+    }", file="aspirinREbin2.txt")
+```
+
+### Specify the JAGS model
+```{r}
+## Set up the JAGS model
+jags.m <- jags.model( file = "aspirinREbin2.txt", data=dat, inits=inits, n.chains=2, n.adapt=500 )
+```
+
+### Specify the parameters of interest
+```{r}
+## specify parameters to be monitored
+params <- c("OR", "prob.OR1", "tau")
+```
+
+### Run JAGS and save the posterior samples
+```{r}
+## run JAGS and save posterior samples
+samps <- coda.samples( jags.m, params, n.iter=10000 )
+```
+
+### Summarize the posterior samples
+```{r}
+## summarize posterior samples
+summary(samps)
+summary(window(samps, start=5001))  # Burn in of 5000. Start at 5001.
+```
+
+### Plot the traces and posterior distrubition for the outcomes.
+The outcomes are odds ratio and 95% confidence intervals because this is a binomial model.
+```{r}
+plot(samps)
+```
+
+## Example 4.1 -- Sensitivity analysis using different priors (priors set 1)
+In the three examples, we started with vague priors. In Bayesian analsyis, priors can be based on our knowledge or they can be "vague."" Vague priors are uninformative and will yield results similar to a frequentist approach. Since this is a pair-wise comparison of two treatment options, we expect to use vague priors to generate OR and 95% CI similar to that of a frequentist approach. 
+
+We are going to perform a meta-analysis by pooling the studies comparing treatment A and B. In this example, there are two treatments (A and B) that result in an event. The number of events are denoted as rA and rB for treatments A and B, respectively. The total number of subjects (denominator) is denoted by nA and nB for treatments A and B, respectively. 
+
+### Read-in the data
+Unlike our previous examples, we will enter the data directly into R. You can still read-in the data using hte read.csv() function; however, you should also know that there are more than one way to enter data into R. 
+```{r}
+##### Clear the dataset
+rm(list=ls())
+
+##### For mac:
+setwd("/Users/mbounthavong/Dropbox/UW Courses/PHARM 536 -- Beth's lecture/Beths Winbugs examples")
+
+##### For PC:
+# setwd("D:\\mboun\\Dropbox\\UW Courses\\PHARM 536 -- Beth's lecture\\Beths Winbugs examples")
+
+dat <- list(rA = c( 49, 44, 102, 32, 85, 246, 1570 ),
+            nA = c( 615, 758, 832, 317, 810, 2267, 8587 ),
+            rB = c( 67, 64, 126, 38,52, 219, 1720 ),
+            nB = c( 624, 771, 850, 309, 406, 2257, 8600 ),
+            Nstud = 7)
+```
+
+### Embed the BUGS model into R
+Next, we will embed the BUGS model directly into R and save it as "betaMeta1.txt."
+```{r}
+### Embed the BUGS model
+cat("model
+    {
+    for( i in 1 : Nstud ) {
+
+    rA[i] ~ dbin(pA[i], nA[i])
+    rB[i] ~ dbin(pB[i], nB[i])
+
+    logit(pA[i]) <- mu[i]
+    logit(pB[i]) <- mu[i] + delta[i]
+
+    mu[i] ~ dnorm(0.0,1.0E-5)
+    delta[i] ~ dnorm(d, prec)
+
+    }
+
+    OR <- exp(d)
+    d ~ dnorm(0.0,1.0E-6)
+
+    tau ~ dunif(0,10)
+    tau.sq <- tau*tau
+    prec <- 1/(tau.sq)
+
+    }", file="betaMeta1.txt")
+```
+
+### Define the initial values for the parameters
+The model has several parameters that need to have initial values. We will use initial values that are 0 for mu and delta. Since there are 7 studies, we will need 7 initial values for mu and delta. 
+```{r}
+inits <- list("d" = 0,
+              "tau"=1, 
+              "mu" = c( 0, 0, 0, 0, 0,  0, 0 ),
+              "delta" = c( 0, 0, 0, 0, 0,  0, 0 )
+              )
+
+params <- c("d","tau","OR")
+```
+
+### Set up the JAGS model
+We set up the JAGS model using the embeded BUGS model entitled "betaMeta1.txt." We will use only 1 chain and 500 adaptations in order to calibrate the MCMC and optimize the model mixing. 
+```{r}
+jags.m <- jags.model( file = "betaMeta1.txt", data=dat, inits=inits, n.chains=2, n.adapt=500 )
+```
+
+### Run JAGS and save the posterior samples
+```{r}
+## run JAGS and save posterior samples
+samps <- coda.samples( jags.m, params, n.iter=10000 )
+```
+
+### Summarize the posterior samples
+```{r}
+## summarize posterior samples
+summary(samps)
+summary(window(samps, start=5001))  # Burn in of 5000. Start at 5001.
+```
+
+### Plot the traces and posterior distributions of the parameters of interest
+```{r}
+plot(samps)
+```
+
+### Record the results
+Record the OR and 95% CI. It should be: OR=1.17; 95%CI: 0.97, 1.44. We will compare our results using a different set of priors. 
+
+## Example 4.2 -- Sensitivity analysis using different priors (priors set 2)
+We are going to perform the same sensitivity analysis with a different set of priors. 
+
+### Read-in the data
+Unlike our previous examples, we will enter the data directly into R. You can still read-in the data using hte read.csv() function; however, you should also know that there are more than one way to enter data into R. 
+```{r}
+##### Clear the dataset
+rm(list=ls())
+
+##### For mac:
+setwd("/Users/mbounthavong/Dropbox/UW Courses/PHARM 536 -- Beth's lecture/Beths Winbugs examples")
+
+##### For PC:
+# setwd("D:\\mboun\\Dropbox\\UW Courses\\PHARM 536 -- Beth's lecture\\Beths Winbugs examples")
+
+dat <- list(rA = c( 49, 44, 102, 32, 85, 246, 1570 ),
+            nA = c( 615, 758, 832, 317, 810, 2267, 8587 ),
+            rB = c( 67, 64, 126, 38,52, 219, 1720 ),
+            nB = c( 624, 771, 850, 309, 406, 2257, 8600 ),
+            Nstud = 7)
+```
+
+### Embed the BUGS model into R. 
+Next, we will embed the BUGS model directly into R and save it as "betaMeta2.txt." Here, is where we can change the priors. Notice that tau, tau.sq, and prec are different in Example 4.2 compared to 4.1. 
+```{r}
+### Embed the BUGS model
+cat("model
+    {
+    for( i in 1 : Nstud ) {
+
+    rA[i] ~ dbin(pA[i], nA[i])
+    rB[i] ~ dbin(pB[i], nB[i])
+
+    logit(pA[i]) <- mu[i]
+    logit(pB[i]) <- mu[i] + delta[i]
+
+    mu[i] ~ dnorm(0.0,1.0E-5)
+    delta[i] ~ dnorm(d, prec)
+
+    }
+    ## Output
+    OR <- exp(d)
+    d ~ dnorm(0.0,1.0E-6)
+    
+    ## Priors
+    tau ~ dnorm( 0, 10 )
+    tau.sq <- tau * tau
+    prec <- 1 / ( tau.sq )
+
+    }", file="betaMeta2.txt")
+```
+
+### Define the initial values for the parameters. 
+The model has several parameters that need to have initial values. We will use initial values that are 0 for mu and delta. Since there are 7 studies, we will need 7 initial values for mu and delta. 
+```{r}
+inits <- list("d" = 0,
+              "tau"=1, 
+              "mu" = c( 0, 0, 0, 0, 0,  0, 0 ),
+              "delta" = c( 0, 0, 0, 0, 0,  0, 0 )
+              )
+
+params <- c("d","tau","OR")
+```
+
+### Set up the JAGS model
+We set up the JAGS model using the embeded BUGS model entitled "betaMeta1.txt." We will use only 1 chain and 500 adaptation in order to calibrate the MCMC and optimize the model mixing. 
+```{r}
+jags.m <- jags.model( file = "betaMeta2.txt", data=dat, inits=inits, n.chains=2, n.adapt=500 )
+```
+
+### Run JAGS and save the posterior samples
+```{r}
+## run JAGS and save posterior samples
+samps <- coda.samples( jags.m, params, n.iter=10000 )
+```
+
+### Summarize the posterior samples
+```{r}
+## summarize posterior samples
+summary(samps)
+summary(window(samps, start=5001))  # Burn in of 5000. Start at 5001.
+```
+
+### Plot the traces and posterior distributions of the parameters of interest
+```{r}
+plot(samps)
+```
+
+### Record the results from Example 4.2
+Record the OR and 95% CI. It should be: OR=1.16; 95% CI: 0.99, 1.40. We will compare our results using a different set of priors. 
+
+
+## Example 4.3 -- Sensitivity analysis using different priors (priors set 3)
+We are going to perform the same sensitivity analysis with a different set of priors. This is the third set of priors.  
+
+### Read-in the data
+Unlike our previous examples, we will enter the data directly into R. You can still read-in the data using the read.csv() function; however, you should also know that there are more than one way to enter data into R. 
+```{r}
+##### Clear the dataset
+rm(list=ls())
+
+##### For mac:
+setwd("/Users/mbounthavong/Dropbox/UW Courses/PHARM 536 -- Beth's lecture/Beths Winbugs examples")
+
+##### For PC:
+# setwd("D:\\mboun\\Dropbox\\UW Courses\\PHARM 536 -- Beth's lecture\\Beths Winbugs examples")
+
+dat <- list(rA = c( 49, 44, 102, 32, 85, 246, 1570 ),
+            nA = c( 615, 758, 832, 317, 810, 2267, 8587 ),
+            rB = c( 67, 64, 126, 38,52, 219, 1720 ),
+            nB = c( 624, 771, 850, 309, 406, 2257, 8600 ),
+            Nstud = 7)
+```
+
+### Embed the BUGS model into R
+
+Next, we will embed the BUGS model directly into R and save it as "betaMeta3.txt." Here, is where we can change the priors. Notice that tau, tau.sq, and prec are different in Example 4.3 compared to 4.1 and 4.2. 
+```{r}
+## Embed the BUGS model
+cat("model
+    {
+    for( i in 1 : Nstud ) {
+    
+    rA[i] ~ dbin( pA[i], nA[i] )
+    rB[i] ~ dbin( pB[i], nB[i] )
+    
+    logit( pA[i] ) <- mu[i]
+    logit( pB[i] ) <- mu[i] + delta[i]
+    
+    mu[i] ~ dnorm( 0.0, 1.0E-5 )
+    delta[i] ~ dnorm( d, prec )
+    
+    }
+    
+    ## Output
+    OR <- exp( d )
+    d ~ dnorm( 0.0, 1.0E-6 )
+    
+    ## Priors
+    tau <- sqrt( tau.sq )
+    tau.sq <- 1 / ( prec )
+    prec ~ dgamma( 0.001, 0.001 )
+    
+    }", file="betaMeta3.txt")
+```
+
+### Define the initial values for the parameters
+
+The model has several parameters that need to have initial values. We will use initial values that are 0 for mu and delta. Since there are 7 studies, we will need 7 initial values for mu and delta. 
+
+Notice that tau is not among the initial values like in Examples 4.1 and 4.2. In Examples 4.1 and 4.2, tau was a distribution, whereas, in Example 4.3, prec is a distribution. As a result, the initial values should only include the distributions that are defined in the model. In this case, they are d, prec, mu and delta. 
+```{r}
+inits <- list("d" = 0,
+              "prec"=1, 
+              "mu" = c( 0, 0, 0, 0, 0,  0, 0 ),
+              "delta" = c( 0, 0, 0, 0, 0,  0, 0 )
+              )
+
+params <- c("d", "prec", "OR")
+```
+
+### Set up the JAGS model
+
+We set up the JAGS model using the embeded BUGS model entitled "betaMeta1.txt." We will use only 1 chain and 500 adaptation in order to calibrate the MCMC and optimize the model mixing. 
+```{r}
+jags.m <- jags.model( file = "betaMeta3.txt", data=dat, inits=inits, n.chains=2, n.adapt=500 )
+```
+
+### Run JAGS and save the posterior samples
+```{r}
+## run JAGS and save posterior samples
+samps <- coda.samples( jags.m, params, n.iter=10000 )
+```
+
+### Summarize the posterior samples
+```{r}
+## summarize posterior samples
+summary(samps)
+summary(window(samps, start=5001))  # Burn in of 5000. Start at 5001.
+```
+
+### Plot the traces and posterior distributions of the parameters of interest
+```{r}
+plot(samps)
+```
+
+### Record the results
+Record the OR and 95% CI. It should be: OR=1.15; 95% CI: 0.997, 1.37. 
+
+### Compare results from the other examples
+Example 1: OR=1.17; 95% CI: 0.97, 1.44 
+
+Example 2: OR=1.16; 95% CI: 0.99, 1.40 
+
+Example 3: OR=1.15; 95% CI: 0.997, 1.37 
+
+The OR and 95% CI are not that different. However, we do report slight differences in the mean OR and 95% CI. Although the conclusions do not change, the use of different priors illustrate that there are still variations in the results. Despite these variations, the result do not change significantly. 
+
+
+## Conclusions
+Bayesian analysis is useful when performing meta-analysis because they allow us to perform indirect treatment comparisons. These examples only focused on pair-wise comparisons. In the next lesson, you will be introduced to mixed treatment comparison using Bayesian methods, which will allow us to use a combination of different pair-wise studies to make direct and indirect comparisons. 
+
+
+
+
+
 
